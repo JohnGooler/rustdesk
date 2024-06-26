@@ -197,6 +197,7 @@ lazy_static::lazy_static! {
     static ref IS_SERVER: bool = std::env::args().nth(1) == Some("--server".to_owned());
     // Is server logic running. The server code can invoked to run by the main process if --server is not running.
     static ref SERVER_RUNNING: Arc<RwLock<bool>> = Default::default();
+    static ref IS_MAIN: bool = std::env::args().nth(1).map_or(true, |arg| !arg.starts_with("--"));
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -248,6 +249,11 @@ pub fn is_support_multi_ui_session_num(ver: i64) -> bool {
 #[inline]
 pub fn is_server() -> bool {
     *IS_SERVER
+}
+
+#[inline]
+pub fn is_main() -> bool {
+    *IS_MAIN
 }
 
 // Is server logic running.
@@ -1428,7 +1434,7 @@ pub fn using_public_server() -> bool {
 
 pub struct ThrottledInterval {
     interval: Interval,
-    last_tick: Instant,
+    next_tick: Instant,
     min_interval: Duration,
 }
 
@@ -1437,7 +1443,7 @@ impl ThrottledInterval {
         let period = i.period();
         ThrottledInterval {
             interval: i,
-            last_tick: Instant::now() - period * 2,
+            next_tick: Instant::now(),
             min_interval: Duration::from_secs_f64(period.as_secs_f64() * 0.9),
         }
     }
@@ -1450,8 +1456,9 @@ impl ThrottledInterval {
     pub fn poll_tick(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Instant> {
         match self.interval.poll_tick(cx) {
             Poll::Ready(instant) => {
-                if self.last_tick.elapsed() >= self.min_interval {
-                    self.last_tick = Instant::now();
+                let now = Instant::now();
+                if self.next_tick <= now {
+                    self.next_tick = now + self.min_interval;
                     Poll::Ready(instant)
                 } else {
                     // This call is required since tokio 1.27
